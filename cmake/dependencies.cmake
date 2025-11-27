@@ -24,8 +24,8 @@ message(STATUS "Installing Godot Engine")
 
 FetchContent_Declare(
     godot
-    GIT_REPOSITORY https://github.com/godotengine/godot.git
-    GIT_TAG        9dd6c4dbac70b28e8156255c3a2b78722772b036
+    GIT_REPOSITORY https://github.com/svenpaulsen/godot.git
+    GIT_TAG        origin/4.5
     EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(godot)
