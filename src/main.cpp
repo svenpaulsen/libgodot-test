@@ -6,7 +6,6 @@
 
 #include <iostream>
 
-#include <godot_instance.h>
 #include <libgodot.h>
 
 /*
@@ -41,20 +40,17 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    // Wrap raw pointer as GodotInstance for convenience
-    auto godot = reinterpret_cast<GodotInstance *>(instance);
-
     // Start the main Godot loop
-    if (!godot->start()) {
+    if (!libgodot_start_godot_instance(instance)) {
         std::cerr << "failed to start Godot Engine instance" << std::endl;
         return EXIT_FAILURE;
     }
 
     // Run Godot's per-frame iteration loop until it returns true (e.g. engine requests shutdown)
-    while (!godot->iteration()) {}
+    while (!libgodot_iteration_godot_instance(instance)) {}
 
     // Cleanly destroy the engine instance
-    libgodot_destroy_godot_instance(godot);
+    libgodot_destroy_godot_instance(instance);
 
     return EXIT_SUCCESS;
 }
