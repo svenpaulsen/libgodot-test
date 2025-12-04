@@ -13,6 +13,86 @@
 #include <iostream>
 
 // ============================================================================
+// macOS keycode to Godot keycode mapping
+// ============================================================================
+
+// Godot Key enum values (from core/os/keyboard.h)
+// Letters are uppercase ASCII values, special keys have SPECIAL bit set
+static const unsigned int GODOT_KEY_SPECIAL = (1 << 22);
+
+static unsigned int macos_to_godot_keycode(unsigned short macKeyCode) {
+    // Map macOS virtual keycodes to Godot keycodes
+    // Letters map to uppercase ASCII, special keys to Godot special values
+    switch (macKeyCode) {
+        // Letters (Godot uses uppercase ASCII)
+        case 0x00: return 'A';
+        case 0x01: return 'S';
+        case 0x02: return 'D';
+        case 0x03: return 'F';
+        case 0x04: return 'H';
+        case 0x05: return 'G';
+        case 0x06: return 'Z';
+        case 0x07: return 'X';
+        case 0x08: return 'C';
+        case 0x09: return 'V';
+        case 0x0B: return 'B';
+        case 0x0C: return 'Q';
+        case 0x0D: return 'W';
+        case 0x0E: return 'E';
+        case 0x0F: return 'R';
+        case 0x10: return 'Y';
+        case 0x11: return 'T';
+        case 0x1F: return 'O';
+        case 0x20: return 'U';
+        case 0x22: return 'I';
+        case 0x23: return 'P';
+        case 0x25: return 'L';
+        case 0x26: return 'J';
+        case 0x28: return 'K';
+        case 0x2D: return 'N';
+        case 0x2E: return 'M';
+
+        // Numbers
+        case 0x12: return '1';
+        case 0x13: return '2';
+        case 0x14: return '3';
+        case 0x15: return '4';
+        case 0x16: return '6';
+        case 0x17: return '5';
+        case 0x19: return '9';
+        case 0x1A: return '7';
+        case 0x1C: return '8';
+        case 0x1D: return '0';
+
+        // Special keys
+        case 0x24: return GODOT_KEY_SPECIAL | 0x05; // Enter
+        case 0x30: return GODOT_KEY_SPECIAL | 0x02; // Tab
+        case 0x31: return ' ';                       // Space
+        case 0x33: return GODOT_KEY_SPECIAL | 0x04; // Backspace
+        case 0x35: return GODOT_KEY_SPECIAL | 0x01; // Escape
+        case 0x7B: return GODOT_KEY_SPECIAL | 0x0F; // Left
+        case 0x7C: return GODOT_KEY_SPECIAL | 0x11; // Right
+        case 0x7D: return GODOT_KEY_SPECIAL | 0x12; // Down
+        case 0x7E: return GODOT_KEY_SPECIAL | 0x10; // Up
+
+        // Punctuation
+        case 0x18: return '=';
+        case 0x1B: return '-';
+        case 0x1E: return ']';
+        case 0x21: return '[';
+        case 0x27: return '\'';
+        case 0x29: return ';';
+        case 0x2A: return '\\';
+        case 0x2B: return ',';
+        case 0x2C: return '/';
+        case 0x2F: return '.';
+        case 0x32: return '`';
+
+        default: return macKeyCode; // Fallback
+    }
+}
+
+// ============================================================================
 // Platform Context
 // ============================================================================
 
@@ -518,8 +598,10 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 - (void)keyDown:(NSEvent*)event {
     if (!self.platformContext->godot_instance) return;
 
-    // Get the key code
-    unsigned short keyCode = [event keyCode];
+    // Get the key code and map to Godot keycode
+    unsigned short macKeyCode = [event keyCode];
+    unsigned int godotKeyCode = macos_to_godot_keycode(macKeyCode);
+
     NSString* chars = [event characters];
     unsigned int unicode = 0;
     if ([chars length] > 0) {
@@ -528,9 +610,9 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 
     libgodot_display_server_push_key_event(
         self.platformContext->godot_instance,
-        keyCode,  // keycode (will need mapping)
-        keyCode,  // physical keycode
-        keyCode,  // key label
+        godotKeyCode,   // keycode (mapped to Godot)
+        godotKeyCode,   // physical keycode
+        godotKeyCode,   // key label
         unicode,
         LIBGODOT_KEY_LOCATION_UNSPECIFIED,
         true,
@@ -550,7 +632,9 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 - (void)keyUp:(NSEvent*)event {
     if (!self.platformContext->godot_instance) return;
 
-    unsigned short keyCode = [event keyCode];
+    unsigned short macKeyCode = [event keyCode];
+    unsigned int godotKeyCode = macos_to_godot_keycode(macKeyCode);
+
     NSString* chars = [event characters];
     unsigned int unicode = 0;
     if ([chars length] > 0) {
@@ -559,9 +643,9 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 
     libgodot_display_server_push_key_event(
         self.platformContext->godot_instance,
-        keyCode,
-        keyCode,
-        keyCode,
+        godotKeyCode,
+        godotKeyCode,
+        godotKeyCode,
         unicode,
         LIBGODOT_KEY_LOCATION_UNSPECIFIED,
         false,
