@@ -20,6 +20,7 @@ struct PlatformContext {
     NSWindow* window = nil;
     NSView* containerView = nil;      // Main container view
     NSView* godotView = nil;          // View that holds the Metal layer for Godot
+    NSView* borderView = nil;         // Border around the Godot view
     CAMetalLayer* metalLayer = nil;
     NSTextField* titleLabel = nil;    // Label above the Godot view
 
@@ -576,6 +577,58 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 @end
 
 // ============================================================================
+// Layout Helper
+// ============================================================================
+
+static void updateLayout(PlatformContext* ctx) {
+    if (!ctx || !ctx->window) return;
+
+    NSRect contentRect = [[ctx->window contentView] bounds];
+
+    // Calculate Godot view frame (in points, unscaled)
+    CGFloat godotX = ctx->inset_left;
+    CGFloat godotY = ctx->inset_bottom;
+    CGFloat godotWidth = contentRect.size.width - ctx->inset_left - ctx->inset_right;
+    CGFloat godotHeight = contentRect.size.height - ctx->inset_top - ctx->inset_bottom;
+
+    // Clamp to minimum size to avoid negative dimensions
+    godotWidth = fmax(godotWidth, 1.0);
+    godotHeight = fmax(godotHeight, 1.0);
+
+    // Update godotView frame
+    if (ctx->godotView) {
+        ctx->godotView.frame = NSMakeRect(godotX, godotY, godotWidth, godotHeight);
+    }
+
+    // Update borderView frame (slightly larger to create border effect)
+    if (ctx->borderView) {
+        CGFloat borderPadding = 2.0;
+        ctx->borderView.frame = NSMakeRect(
+            godotX - borderPadding,
+            godotY - borderPadding,
+            godotWidth + borderPadding * 2,
+            godotHeight + borderPadding * 2
+        );
+    }
+
+    // Update titleLabel frame (positioned above the Godot area)
+    if (ctx->titleLabel) {
+        CGFloat labelHeight = 30.0;
+        CGFloat labelY = contentRect.size.height - ctx->inset_top + 20;
+        ctx->titleLabel.frame = NSMakeRect(ctx->inset_left, labelY, godotWidth, labelHeight);
+    }
+
+    // Update stored dimensions (in pixels, scaled)
+    ctx->width = (int)(godotWidth * ctx->scale);
+    ctx->height = (int)(godotHeight * ctx->scale);
+
+    // Update CAMetalLayer drawable size
+    if (ctx->metalLayer) {
+        ctx->metalLayer.drawableSize = CGSizeMake(ctx->width, ctx->height);
+    }
+}
+
+// ============================================================================
 // Window Delegate
 // ============================================================================
 
@@ -608,27 +661,49 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 }
 
 - (void)windowDidResize:(NSNotification*)notification {
-    NSWindow* window = [notification object];
-    NSRect frame = [[window contentView] frame];
-    float scale = self.platformContext->scale;
+    PlatformContext* ctx = self.platformContext;
+    if (!ctx) return;
 
-    int newWidth = (int)(frame.size.width * scale);
-    int newHeight = (int)(frame.size.height * scale);
+    // Store old dimensions to detect actual changes
+    int oldWidth = ctx->width;
+    int oldHeight = ctx->height;
 
-    if (newWidth != self.platformContext->width || newHeight != self.platformContext->height) {
-        self.platformContext->width = newWidth;
-        self.platformContext->height = newHeight;
+    // Recalculate and apply layout for all views
+    updateLayout(ctx);
 
-        // Update metal layer size
-        if (self.platformContext->metalLayer) {
-            self.platformContext->metalLayer.drawableSize = CGSizeMake(newWidth, newHeight);
+    // Notify Godot if dimensions actually changed
+    if ((ctx->width != oldWidth || ctx->height != oldHeight) && ctx->godot_instance) {
+        libgodot_display_server_notify_window_size_changed(
+            ctx->godot_instance,
+            LIBGODOT_MAIN_WINDOW_ID,
+            ctx->width, ctx->height
+        );
+    }
+}
+
+- (void)windowDidChangeBackingProperties:(NSNotification*)notification {
+    PlatformContext* ctx = self.platformContext;
+    if (!ctx || !ctx->window) return;
+
+    // Check if scale factor changed (e.g., window moved between Retina and non-Retina displays)
+    CGFloat newScale = [[ctx->window screen] backingScaleFactor];
+    if (newScale != ctx->scale) {
+        ctx->scale = newScale;
+
+        // Update Metal layer contents scale
+        if (ctx->metalLayer) {
+            ctx->metalLayer.contentsScale = newScale;
         }
 
-        if (self.platformContext->godot_instance) {
+        // Recalculate layout with new scale
+        updateLayout(ctx);
+
+        // Notify Godot of size change (dimensions in pixels changed due to scale)
+        if (ctx->godot_instance) {
             libgodot_display_server_notify_window_size_changed(
-                self.platformContext->godot_instance,
+                ctx->godot_instance,
                 LIBGODOT_MAIN_WINDOW_ID,
-                newWidth, newHeight
+                ctx->width, ctx->height
             );
         }
     }
@@ -728,6 +803,7 @@ PlatformContext* platform_init(int width, int height, const char* title) {
         borderView.layer.backgroundColor = [[NSColor colorWithCalibratedRed:0.4 green:0.4 blue:0.5 alpha:1.0] CGColor];
         borderView.layer.cornerRadius = 4;
         [containerView addSubview:borderView];
+        ctx->borderView = borderView;
 
         // Create Godot view (where Metal rendering happens)
         NSRect godotRect = NSMakeRect(ctx->inset_left, ctx->inset_bottom, width, height);
