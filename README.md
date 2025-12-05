@@ -6,8 +6,8 @@ A lightweight test application that embeds and runs the Godot Engine using `libg
 
 You **must** provide a project directory using:
 
-```bash
-godot_test --path ../sample/
+```text
+godot_test <project_path_or_pck>
 ```
 
 All additional arguments are passed directly to the embedded Godot engine.

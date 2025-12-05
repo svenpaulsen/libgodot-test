@@ -20,6 +20,28 @@ extern "C" void platform_set_godot_instance(PlatformContext* ctx, GDExtensionObj
 // Global state
 static GDExtensionObjectPtr g_godot_instance = nullptr;
 static bool                 g_should_quit    = false;
+static PlatformContext*     g_platform       = nullptr;
+static std::string          g_project_path;
+static bool                 g_project_running = false;
+
+static std::string resolve_project_path(int argc, char* argv[])
+{
+    for (int i = 1; i < argc - 1; ++i) {
+        std::string arg = argv[i];
+        if ((arg == "--path" || arg == "--main-pack") && (i + 1) < argc) {
+            return std::string(argv[i + 1]);
+        }
+    }
+
+    if (argc > 1) {
+        std::string first = argv[1];
+        if (first != "--path" && first != "--main-pack") {
+            return first;
+        }
+    }
+
+    return {};
+}
 
 /*
  * Custom Godot GDExtension initialization entry point.
@@ -45,6 +67,61 @@ static GDExtensionBool init_extension(GDExtensionInterfaceGetProcAddress p_get_p
     return true;
 }
 
+static void update_run_state(bool running, const std::string& status)
+{
+    g_project_running = running;
+    if (g_platform) {
+        const char* status_text = status.empty() ? nullptr : status.c_str();
+        platform_set_run_state(g_platform, running, status_text);
+    }
+}
+
+static void stop_project(const char* reason = nullptr)
+{
+    if (!g_godot_instance || !g_project_running) {
+        return;
+    }
+
+    std::string log_reason = reason ? std::string(reason) : "Stopped";
+    std::cout << "[libgodot-test] Unloading project (" << log_reason << ")" << std::endl;
+
+    libgodot_unload_project(g_godot_instance);
+
+    std::string status = reason ? std::string("Project stopped: ") + reason : "Project stopped";
+    update_run_state(false, status);
+}
+
+static void start_project()
+{
+    if (!g_godot_instance) {
+        std::cerr << "[libgodot-test] Cannot start project: Godot instance is null" << std::endl;
+        g_should_quit = true;
+        return;
+    }
+
+    if (g_project_running) {
+        std::cout << "[libgodot-test] Project already running" << std::endl;
+        return;
+    }
+
+    if (g_project_path.empty()) {
+        std::cerr << "[libgodot-test] Cannot start project: no path provided" << std::endl;
+        return;
+    }
+
+    std::cout << "[libgodot-test] Loading project: " << g_project_path << std::endl;
+    update_run_state(false, "Loading project...");
+
+    if (!libgodot_load_project(g_godot_instance, g_project_path.c_str())) {
+        std::cerr << "[libgodot-test] Failed to load Godot project: " << g_project_path << std::endl;
+        update_run_state(false, "Failed to load project");
+        return;
+    }
+
+    std::string status = "Running project: " + g_project_path;
+    update_run_state(true, status);
+}
+
 /*
  * Frame callback - called each frame from platform event loop
  * Returns true when we should quit
@@ -55,10 +132,14 @@ static bool on_frame()
         return true;
     }
 
-    // Run one Godot iteration
-    bool should_quit = libgodot_iteration_godot_instance(g_godot_instance);
+    if (g_project_running) {
+        bool should_quit = libgodot_iteration_godot_instance(g_godot_instance);
+        if (should_quit) {
+            stop_project("Project requested exit");
+        }
+    }
 
-    return should_quit || g_should_quit;
+    return g_should_quit;
 }
 
 /*
@@ -66,6 +147,7 @@ static bool on_frame()
  */
 static void on_quit()
 {
+    stop_project("Window close requested");
     g_should_quit = true;
 }
 
@@ -73,13 +155,11 @@ int main(int argc, char* argv[])
 {
     std::cout << "[libgodot-test] Starting..." << std::endl;
 
-    // Extract project path from arguments for window title
-    std::string project_path;
-    for (int i = 1; i < argc; i++) {
-        if (std::string(argv[i]) == "--path" && i + 1 < argc) {
-            project_path = argv[i + 1];
-            break;
-        }
+    // Extract project path from arguments for window title and load/unload
+    auto project_path = resolve_project_path(argc, argv);
+    if (project_path.empty()) {
+        std::cerr << "Usage: godot_test <project_path_or_pck> [--path <project_path>|--main-pack <pck>]" << std::endl;
+        return EXIT_FAILURE;
     }
 
     // Initialize platform (creates native window)
@@ -94,6 +174,8 @@ int main(int argc, char* argv[])
         std::string title = "Embedded Godot Project from " + project_path;
         platform_set_window_title(platform, title.c_str());
     }
+    g_platform = platform;
+    g_project_path = project_path;
 
     // Set up the external display server interface
     LibGodotDisplayServerInterface* ds_interface = platform_get_display_server_interface(platform);
@@ -142,29 +224,32 @@ int main(int argc, char* argv[])
     // Set the instance on the platform context so events can be forwarded
     platform_set_godot_instance(platform, g_godot_instance);
 
-    // Start the Godot main loop
-    if (!libgodot_start_godot_instance(g_godot_instance)) {
-        std::cerr << "[libgodot-test] Failed to start Godot instance" << std::endl;
-        libgodot_destroy_godot_instance(g_godot_instance);
-        platform_shutdown(platform);
-        return EXIT_FAILURE;
-    }
-
-    std::cout << "[libgodot-test] Godot started, entering main loop" << std::endl;
+    // Initial UI state before starting the project
+    std::string initial_status = "Project ready: " + g_project_path;
+    update_run_state(false, initial_status);
 
     // Run the platform event loop
     PlatformCallbacks callbacks;
     callbacks.on_frame = on_frame;
     callbacks.on_quit  = on_quit;
+    callbacks.on_start = start_project;
+    callbacks.on_stop  = []() { stop_project("Stopped by user"); };
+
+    // Auto-start the project once the engine is initialized
+    start_project();
+
+    std::cout << "[libgodot-test] Godot ready, entering main loop" << std::endl;
     platform_run(platform, callbacks);
 
     std::cout << "[libgodot-test] Main loop ended, shutting down" << std::endl;
 
     // Clean up
+    stop_project("Shutting down");
     libgodot_destroy_godot_instance(g_godot_instance);
     g_godot_instance = nullptr;
 
     platform_shutdown(platform);
+    g_platform = nullptr;
 
     std::cout << "[libgodot-test] Done" << std::endl;
     return EXIT_SUCCESS;

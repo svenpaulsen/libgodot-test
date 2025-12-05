@@ -11,6 +11,7 @@
 #include "platform.h"
 
 #include <iostream>
+#include <string>
 
 // ============================================================================
 // macOS keycode to Godot keycode mapping
@@ -101,8 +102,12 @@ struct PlatformContext {
     NSView* containerView = nil;      // Main container view
     NSView* godotView = nil;          // View that holds the Metal layer for Godot
     NSView* borderView = nil;         // Border around the Godot view
+    NSView* overlayView = nil;        // Semi-transparent overlay when project is stopped
     CAMetalLayer* metalLayer = nil;
     NSTextField* titleLabel = nil;    // Label above the Godot view
+    NSButton* startButton = nil;      // Start project button
+    NSButton* stopButton = nil;       // Stop project button
+    NSObject* controlsTarget = nil;   // Target to route button actions
 
     LibGodotDisplayServerInterface interface = {};
 
@@ -119,6 +124,7 @@ struct PlatformContext {
 
     bool running = false;
     bool focused = true;
+    bool project_running = false;
 
     // Mouse state
     int mouse_x = 0;
@@ -201,12 +207,23 @@ static void ds_get_window_size(void* user_data, int window_id, int* w, int* h) {
 
 static void ds_set_window_size(void* user_data, int window_id, int w, int h) {
     PlatformContext* ctx = (PlatformContext*)user_data;
-    if (ctx->window) {
-        NSRect frame = [ctx->window frame];
-        frame.size.width = w / ctx->scale;
-        frame.size.height = h / ctx->scale;
-        [ctx->window setFrame:frame display:YES animate:NO];
+    if (!ctx->window) {
+        return;
     }
+
+    // Ignore resize requests before a project is running to keep the initial window size.
+    if (!ctx->project_running) {
+        return;
+    }
+
+    // Prevent the project from shrinking the window below the current embedded area.
+    int target_w = w < ctx->width ? ctx->width : w;
+    int target_h = h < ctx->height ? ctx->height : h;
+
+    NSRect frame = [ctx->window frame];
+    frame.size.width = target_w / ctx->scale;
+    frame.size.height = target_h / ctx->scale;
+    [ctx->window setFrame:frame display:YES animate:NO];
 }
 
 static void ds_set_window_position(void* user_data, int window_id, int x, int y) {
@@ -369,6 +386,12 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
     return YES;
 }
 
+- (BOOL)shouldForwardInput {
+    return self.platformContext &&
+           self.platformContext->godot_instance &&
+           self.platformContext->project_running;
+}
+
 - (CALayer*)makeBackingLayer {
     CAMetalLayer* layer = [CAMetalLayer layer];
     // Note: We set device here for early layer setup, but Godot's Metal driver
@@ -416,7 +439,7 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 
 // Mouse events
 - (void)mouseDown:(NSEvent*)event {
-    if (!self.platformContext->godot_instance) return;
+    if (![self shouldForwardInput]) return;
 
     int x, y;
     [self getMousePosition:event x:&x y:&y];
@@ -432,7 +455,7 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 }
 
 - (void)mouseUp:(NSEvent*)event {
-    if (!self.platformContext->godot_instance) return;
+    if (![self shouldForwardInput]) return;
 
     int x, y;
     [self getMousePosition:event x:&x y:&y];
@@ -448,7 +471,7 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 }
 
 - (void)rightMouseDown:(NSEvent*)event {
-    if (!self.platformContext->godot_instance) return;
+    if (![self shouldForwardInput]) return;
 
     int x, y;
     [self getMousePosition:event x:&x y:&y];
@@ -464,7 +487,7 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 }
 
 - (void)rightMouseUp:(NSEvent*)event {
-    if (!self.platformContext->godot_instance) return;
+    if (![self shouldForwardInput]) return;
 
     int x, y;
     [self getMousePosition:event x:&x y:&y];
@@ -480,7 +503,7 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 }
 
 - (void)otherMouseDown:(NSEvent*)event {
-    if (!self.platformContext->godot_instance) return;
+    if (![self shouldForwardInput]) return;
 
     int x, y;
     [self getMousePosition:event x:&x y:&y];
@@ -511,7 +534,7 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 }
 
 - (void)otherMouseUp:(NSEvent*)event {
-    if (!self.platformContext->godot_instance) return;
+    if (![self shouldForwardInput]) return;
 
     int x, y;
     [self getMousePosition:event x:&x y:&y];
@@ -542,7 +565,7 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 }
 
 - (void)mouseMoved:(NSEvent*)event {
-    if (!self.platformContext->godot_instance) return;
+    if (![self shouldForwardInput]) return;
 
     int x, y;
     [self getMousePosition:event x:&x y:&y];
@@ -574,7 +597,7 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 }
 
 - (void)scrollWheel:(NSEvent*)event {
-    if (!self.platformContext->godot_instance) return;
+    if (![self shouldForwardInput]) return;
 
     int x, y;
     [self getMousePosition:event x:&x y:&y];
@@ -596,7 +619,7 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 
 // Keyboard events
 - (void)keyDown:(NSEvent*)event {
-    if (!self.platformContext->godot_instance) return;
+    if (![self shouldForwardInput]) return;
 
     // Get the key code and map to Godot keycode
     unsigned short macKeyCode = [event keyCode];
@@ -630,7 +653,7 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 }
 
 - (void)keyUp:(NSEvent*)event {
-    if (!self.platformContext->godot_instance) return;
+    if (![self shouldForwardInput]) return;
 
     unsigned short macKeyCode = [event keyCode];
     unsigned int godotKeyCode = macos_to_godot_keycode(macKeyCode);
@@ -660,6 +683,27 @@ static void ds_set_window_title(void* user_data, int window_id, const char* titl
 
 @end
 
+// Target object that forwards UI button actions to the callbacks owned by the C++ side
+@interface LibGodotTestControls : NSObject
+@property (nonatomic, assign) PlatformContext* platformContext;
+@end
+
+@implementation LibGodotTestControls
+
+- (void)startPressed:(id)sender {
+    if (self.platformContext && self.platformContext->callbacks.on_start) {
+        self.platformContext->callbacks.on_start();
+    }
+}
+
+- (void)stopPressed:(id)sender {
+    if (self.platformContext && self.platformContext->callbacks.on_stop) {
+        self.platformContext->callbacks.on_stop();
+    }
+}
+
+@end
+
 // ============================================================================
 // Layout Helper
 // ============================================================================
@@ -668,6 +712,9 @@ static void updateLayout(PlatformContext* ctx) {
     if (!ctx || !ctx->window) return;
 
     NSRect contentRect = [[ctx->window contentView] bounds];
+    const CGFloat buttonWidth = 110.0;
+    const CGFloat buttonHeight = 30.0;
+    const CGFloat buttonSpacing = 12.0;
 
     // Calculate Godot view frame (in points, unscaled)
     CGFloat godotX = ctx->inset_left;
@@ -699,7 +746,23 @@ static void updateLayout(PlatformContext* ctx) {
     if (ctx->titleLabel) {
         CGFloat labelHeight = 30.0;
         CGFloat labelY = contentRect.size.height - ctx->inset_top + 20;
-        ctx->titleLabel.frame = NSMakeRect(ctx->inset_left, labelY, godotWidth, labelHeight);
+        CGFloat labelWidth = godotWidth;
+        if (ctx->startButton && ctx->stopButton) {
+            CGFloat reservedSpace = buttonWidth * 2 + buttonSpacing + 8.0;
+            labelWidth = fmax(godotWidth - reservedSpace, 100.0);
+        }
+        ctx->titleLabel.frame = NSMakeRect(ctx->inset_left, labelY, labelWidth, labelHeight);
+    }
+
+    // Position start/stop buttons in the header area
+    if (ctx->startButton && ctx->stopButton) {
+        CGFloat buttonY = contentRect.size.height - ctx->inset_top + 12.0;
+
+        CGFloat stopX = contentRect.size.width - ctx->inset_right - buttonWidth;
+        CGFloat startX = stopX - buttonWidth - buttonSpacing;
+
+        ctx->startButton.frame = NSMakeRect(startX, buttonY, buttonWidth, buttonHeight);
+        ctx->stopButton.frame = NSMakeRect(stopX, buttonY, buttonWidth, buttonHeight);
     }
 
     // Update stored dimensions (in pixels, scaled)
@@ -709,6 +772,11 @@ static void updateLayout(PlatformContext* ctx) {
     // Update CAMetalLayer drawable size
     if (ctx->metalLayer) {
         ctx->metalLayer.drawableSize = CGSizeMake(ctx->width, ctx->height);
+    }
+
+    // Match overlay to Godot view area
+    if (ctx->overlayView && ctx->godotView) {
+        ctx->overlayView.frame = ctx->godotView.frame;
     }
 }
 
@@ -876,6 +944,31 @@ PlatformContext* platform_init(int width, int height, const char* title) {
         [containerView addSubview:label];
         ctx->titleLabel = label;
 
+        // Set up start/stop controls
+        LibGodotTestControls* controls = [[LibGodotTestControls alloc] init];
+        controls.platformContext = ctx;
+        ctx->controlsTarget = controls;
+
+        NSButton* startButton = [NSButton buttonWithTitle:@"Start"
+                                                   target:controls
+                                                   action:@selector(startPressed:)];
+        startButton.bezelStyle = NSBezelStyleRounded;
+        startButton.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+        startButton.wantsLayer = YES;
+        startButton.layer.cornerRadius = 6.0;
+        [containerView addSubview:startButton];
+        ctx->startButton = startButton;
+
+        NSButton* stopButton = [NSButton buttonWithTitle:@"Stop"
+                                                  target:controls
+                                                  action:@selector(stopPressed:)];
+        stopButton.bezelStyle = NSBezelStyleRounded;
+        stopButton.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+        stopButton.wantsLayer = YES;
+        stopButton.layer.cornerRadius = 6.0;
+        [containerView addSubview:stopButton];
+        ctx->stopButton = stopButton;
+
         // Create border view (slightly larger than Godot view for border effect)
         int borderWidth = 2;
         NSRect borderRect = NSMakeRect(ctx->inset_left - borderWidth,
@@ -896,6 +989,14 @@ PlatformContext* platform_init(int width, int height, const char* title) {
         godotView.wantsLayer = YES;  // Force layer creation immediately
         [containerView addSubview:godotView];
         ctx->godotView = godotView;
+
+        // Overlay view used to gray-out the last frame when stopped
+        NSView* overlay = [[NSView alloc] initWithFrame:godotRect];
+        overlay.wantsLayer = YES;
+        overlay.layer.backgroundColor = [[NSColor colorWithCalibratedWhite:0.1 alpha:0.55] CGColor];
+        overlay.hidden = YES;
+        [containerView addSubview:overlay positioned:NSWindowAbove relativeTo:godotView];
+        ctx->overlayView = overlay;
 
         // Force the layer to be created now by accessing it
         CALayer* layer = [godotView layer];
@@ -941,6 +1042,10 @@ PlatformContext* platform_init(int width, int height, const char* title) {
         ctx->interface.get_mouse_button_state = ds_get_mouse_button_state;
         ctx->interface.cursor_set_shape = ds_cursor_set_shape;
         ctx->interface.set_window_title = ds_set_window_title;
+
+        // Apply initial layout/state to controls before showing the window
+        updateLayout(ctx);
+        platform_set_run_state(ctx, false, nullptr);
 
         return ctx;
     }
@@ -1006,6 +1111,32 @@ void platform_set_window_title(PlatformContext* ctx, const char* title) {
         // Update the label inside the window
         if (ctx->titleLabel) {
             [ctx->titleLabel setStringValue:[NSString stringWithUTF8String:title]];
+        }
+    }
+}
+
+void platform_set_run_state(PlatformContext* ctx, bool project_running, const char* status_text) {
+    if (!ctx) return;
+
+    ctx->project_running = project_running;
+
+    @autoreleasepool {
+        if (ctx->overlayView) {
+            ctx->overlayView.hidden = project_running;
+        }
+        if (ctx->godotView && ctx->godotView.layer) {
+            ctx->godotView.layer.opacity = project_running ? 1.0 : 0.55;
+        }
+        if (ctx->startButton) {
+            [ctx->startButton setEnabled:!project_running];
+            ctx->startButton.alphaValue = project_running ? 0.6 : 1.0;
+        }
+        if (ctx->stopButton) {
+            [ctx->stopButton setEnabled:project_running];
+            ctx->stopButton.alphaValue = project_running ? 1.0 : 0.6;
+        }
+        if (ctx->titleLabel && status_text) {
+            [ctx->titleLabel setStringValue:[NSString stringWithUTF8String:status_text]];
         }
     }
 }
