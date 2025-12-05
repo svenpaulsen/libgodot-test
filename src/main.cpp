@@ -33,6 +33,12 @@ GDExtensionBool init_extension(GDExtensionInterfaceGetProcAddress p_get_proc_add
 
 int main(int argc, char *argv[])
 {
+    if (argc < 2) {
+        std::cerr << "Usage: godot_test <project_path_or_pck>" << std::endl;
+        return EXIT_FAILURE;
+    }
+    const char *project_path = argv[1];
+
     // Create an embedded Godot engine instance
     auto instance = libgodot_create_godot_instance(argc, argv, init_extension);
     if (instance == nullptr) {
@@ -40,9 +46,10 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    // Start the main Godot loop
-    if (!libgodot_start_godot_instance(instance)) {
-        std::cerr << "failed to start Godot Engine instance" << std::endl;
+    // Load and start the project after the engine is initialized.
+    if (!libgodot_load_project(instance, project_path)) {
+        std::cerr << "failed to load Godot project: " << project_path << std::endl;
+        libgodot_destroy_godot_instance(instance);
         return EXIT_FAILURE;
     }
 
@@ -50,6 +57,7 @@ int main(int argc, char *argv[])
     while (!libgodot_iteration_godot_instance(instance)) {}
 
     // Cleanly destroy the engine instance
+    libgodot_unload_project(instance);
     libgodot_destroy_godot_instance(instance);
 
     return EXIT_SUCCESS;
