@@ -1,0 +1,7 @@
+/build
+/deps
+.cache
+build-*
+CMakeLists.txt.user
+Thumbs.db
+.DS_Store
