@@ -78,10 +78,10 @@ static void my_status(void * /*userdata*/, LibGodotStatus status, const char *de
 int main(int argc, char *argv[])
 {
     if (argc < 2) {
-        std::cerr << "Usage: godot_test <project_path_or_pck>" << std::endl;
+        std::cerr << "Usage: godot_test [godot_options...] <project_path_or_pck>" << std::endl;
         return EXIT_FAILURE;
     }
-    const char *project_path = argv[1];
+    const char *project_path = argv[argc - 1];
 
     // Register callbacks before creating the instance to capture early messages.
     libgodot_set_log_callback(my_log, nullptr);
