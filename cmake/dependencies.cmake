@@ -9,7 +9,7 @@ message(STATUS "Installing Godot Engine")
 FetchContent_Declare(
     godot
     GIT_REPOSITORY https://github.com/svenpaulsen/godot.git
-    GIT_TAG        origin/4.6
+    GIT_TAG        origin/4.7
     EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(godot)
